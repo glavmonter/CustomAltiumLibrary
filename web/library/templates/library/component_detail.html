@@ -1,0 +1,94 @@
+{% extends "library/base.html" %}
+
+{% block title %}{{ c.manufacturer_pn }} — {{ c.design_item_id }}{% endblock %}
+
+{% block content %}
+<article class="card">
+  <header class="card-head">
+    <div class="crumbs"><a href="{% url 'library:components' %}?class={{ c.component_class_id }}">{{ class_path }}</a></div>
+    <h1>{{ c.manufacturer_pn }}</h1>
+    <div class="subtitle">
+      {% if c.manufacturer.website %}<a href="{{ c.manufacturer.website }}" rel="noopener" target="_blank">{{ c.manufacturer.name }}</a>{% else %}{{ c.manufacturer.name }}{% endif %}
+      <span class="mono did">{{ c.design_item_id }}</span>
+      <span class="status status-{{ c.status }}">{{ c.get_status_display }}</span>
+    </div>
+    {% if c.description %}<p class="description">{{ c.description }}</p>{% endif %}
+    <div class="actions">
+      {% if c.datasheet_url %}<a class="button" href="{{ c.datasheet_url }}" rel="noopener" target="_blank">Даташит (PDF)</a>{% endif %}
+      {% if perms.library.change_component %}<a class="button secondary" href="{% url 'admin:library_component_change' c.id %}">Редактировать</a>{% endif %}
+    </div>
+  </header>
+
+  <div class="card-body">
+    <section class="images">
+      <figure class="preview">
+        <figcaption>УГО <span class="muted mono small">{{ c.symbol.library_ref }}</span></figcaption>
+        {% if c.symbol.preview_media_id %}
+          <img src="{% url 'library:media' c.symbol.preview_media_id %}" alt="УГО {{ c.symbol.library_ref }}">
+        {% else %}
+          <div class="noimage">нет картинки</div>
+        {% endif %}
+      </figure>
+
+      {% for slot in footprints %}
+      <figure class="preview">
+        <figcaption>
+          {% if slot.is_primary %}Посадочное место{% else %}Альтернативное посадочное место {{ slot.slot }}{% endif %}
+          <span class="muted mono small">{{ slot.footprint.footprint_ref }}</span>
+        </figcaption>
+        <div class="views">
+          {% if slot.footprint.preview_media_id %}
+            <img src="{% url 'library:media' slot.footprint.preview_media_id %}" alt="2D {{ slot.footprint.footprint_ref }}">
+          {% endif %}
+          {% if slot.footprint.preview3d_media_id %}
+            <img src="{% url 'library:media' slot.footprint.preview3d_media_id %}" alt="3D {{ slot.footprint.footprint_ref }}">
+          {% endif %}
+          {% if not slot.footprint.preview_media_id and not slot.footprint.preview3d_media_id %}
+            <div class="noimage">нет картинки</div>
+          {% endif %}
+        </div>
+        {% if slot.footprint.description %}<p class="muted small">{{ slot.footprint.description }}</p>{% endif %}
+      </figure>
+      {% empty %}
+      <figure class="preview"><figcaption>Посадочное место</figcaption><div class="noimage">не задано (компонент без PCB)</div></figure>
+      {% endfor %}
+    </section>
+
+    <section class="params">
+      <h2>Параметры в Altium</h2>
+      <table class="kv">
+        <tr><th>Design Item ID</th><td class="mono">{{ c.design_item_id }}</td></tr>
+        <tr><th>Class</th><td>{{ c.component_class.name }}</td></tr>
+        <tr><th>Comment</th><td>{{ c.altium_comment }}</td></tr>
+        <tr><th>Value</th><td>{{ c.value|default:"—" }}</td></tr>
+        <tr><th>Voltage</th><td>{{ c.voltage|default:"—" }}</td></tr>
+        <tr><th>Tolerance</th><td>{{ c.tolerance|default:"—" }}</td></tr>
+        <tr><th>Manufacturer 1</th><td>{{ c.manufacturer.name }}</td></tr>
+        <tr><th>Manufacturer Part Number 1</th><td class="mono">{{ c.manufacturer_pn }}</td></tr>
+        <tr><th>HelpURL</th><td>{% if c.datasheet_url %}<a href="{{ c.datasheet_url }}" rel="noopener" target="_blank" class="break">{{ c.datasheet_url }}</a>{% else %}—{% endif %}</td></tr>
+        <tr><th>Library Ref</th><td class="mono">{{ c.symbol.library_ref }}</td></tr>
+        <tr><th>Library Path</th><td class="mono">{{ c.symbol.library_path }}</td></tr>
+        {% for slot in footprints %}
+        <tr><th>Footprint Ref{% if not slot.is_primary %} {{ slot.slot }}{% endif %}</th>
+            <td class="mono">{{ slot.footprint.footprint_ref }} <span class="muted">({{ slot.footprint.footprint_path }})</span></td></tr>
+        {% endfor %}
+      </table>
+
+      <h2>Где купить</h2>
+      {% if suppliers %}
+      <table class="kv suppliers">
+        {% for s in suppliers %}
+        <tr>
+          <th>Supplier {{ s.slot }}</th>
+          <td>{{ s.supplier.name }}</td>
+          <td class="mono">{% if s.url %}<a href="{{ s.url }}" rel="noopener" target="_blank">{{ s.supplier_pn }}</a>{% else %}{{ s.supplier_pn }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+        <p class="muted">Магазины не указаны.</p>
+      {% endif %}
+    </section>
+  </div>
+</article>
+{% endblock %}

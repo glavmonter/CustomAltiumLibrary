@@ -1,0 +1,27 @@
+{% load static %}<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Библиотека компонентов{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'library/style.css' %}">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="{% url 'library:components' %}">Библиотека Altium</a>
+  <form class="search" action="{% url 'library:components' %}" method="get" role="search">
+    <input type="search" name="q" value="{{ q|default:'' }}" placeholder="MPN, Design Item ID, номинал, описание…" aria-label="Поиск">
+  </form>
+  <nav class="user">
+    {% if user.is_staff %}
+      <a href="{% url 'admin:index' %}">Редактирование</a>
+    {% elif not user.is_authenticated %}
+      <a href="{% url 'admin:login' %}?next={{ request.get_full_path|urlencode }}">Войти</a>
+    {% endif %}
+  </nav>
+</header>
+<main>
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

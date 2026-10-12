@@ -1,0 +1,102 @@
+{% extends "library/base.html" %}
+
+{% block title %}{% if current_class %}{{ current_class.name }} — {% endif %}Библиотека компонентов{% endblock %}
+
+{% block content %}
+<div class="layout">
+  <aside class="classes">
+    <h2>Классы</h2>
+    <ul>
+      <li><a href="{% querystring class=None page=None %}" class="{% if not current_class %}active{% endif %}">
+        Все <span class="count">{{ total_count }}</span></a></li>
+      {% for row in class_rows %}
+        <li style="--depth: {{ row.depth }}">
+          <a href="{% querystring class=row.cls.id page=None %}" class="{% if current_class.id == row.cls.id %}active{% endif %}">
+            {{ row.cls.name }} <span class="count">{{ row.count }}</span></a>
+        </li>
+      {% endfor %}
+    </ul>
+  </aside>
+
+  <section class="results">
+    <form class="filters" method="get">
+      {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+      {% if current_class %}<input type="hidden" name="class" value="{{ current_class.id }}">{% endif %}
+      <label>Производитель
+        <select name="manufacturer" onchange="this.form.submit()">
+          <option value="">все</option>
+          {% for m in manufacturers %}
+            <option value="{{ m.id }}" {% if m.id == manufacturer_id %}selected{% endif %}>{{ m.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Статус
+        <select name="status" onchange="this.form.submit()">
+          <option value="">все</option>
+          {% for value, label in statuses %}
+            <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <noscript><button type="submit">Применить</button></noscript>
+      <span class="found">
+        {% if current_class_path %}{{ current_class_path }} · {% endif %}найдено: {{ page.paginator.count }}
+      </span>
+    </form>
+
+    {% if page.object_list %}
+    <div class="table-wrap">
+      <table class="components">
+        <thead>
+          <tr>
+            <th class="thumb">УГО</th>
+            <th>Design Item ID</th>
+            <th>MPN / описание</th>
+            <th>Производитель</th>
+            <th>Класс</th>
+            <th>Value</th>
+            <th>Voltage</th>
+            <th>Tolerance</th>
+            <th>Footprint</th>
+            <th>Статус</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in page.object_list %}
+          <tr>
+            <td class="thumb">
+              {% if c.symbol.preview_media_id %}
+                <img src="{% url 'library:media' c.symbol.preview_media_id %}" alt="" loading="lazy">
+              {% endif %}
+            </td>
+            <td class="mono"><a href="{{ c.get_absolute_url }}">{{ c.design_item_id }}</a></td>
+            <td>
+              <a href="{{ c.get_absolute_url }}" class="mpn">{{ c.manufacturer_pn }}</a>
+              {% if c.description %}<div class="muted small">{{ c.description|truncatechars:90 }}</div>{% endif %}
+            </td>
+            <td>{{ c.manufacturer.name }}</td>
+            <td>{{ c.component_class.name }}</td>
+            <td>{{ c.value|default:"" }}</td>
+            <td>{{ c.voltage|default:"" }}</td>
+            <td>{{ c.tolerance|default:"" }}</td>
+            <td class="mono small">{{ c.primary_footprint.footprint_ref|default:"" }}</td>
+            <td><span class="status status-{{ c.status }}">{{ c.get_status_display }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if page.has_other_pages %}
+    <nav class="pager">
+      {% if page.has_previous %}<a href="{% querystring page=page.previous_page_number %}">← назад</a>{% endif %}
+      <span>стр. {{ page.number }} из {{ page.paginator.num_pages }}</span>
+      {% if page.has_next %}<a href="{% querystring page=page.next_page_number %}">вперёд →</a>{% endif %}
+    </nav>
+    {% endif %}
+    {% else %}
+      <p class="empty">Ничего не найдено.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
