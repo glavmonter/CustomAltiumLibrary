@@ -3,3 +3,8 @@
 __pycache__/
 *.pyc
 web/staticfiles/
+
+# файлы библиотеки Altium живут в отдельном репозитории CustomAltiumLibrary-Lib
+*.SchLib
+*.PcbLib
+*.DbLib
