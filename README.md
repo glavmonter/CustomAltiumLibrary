@@ -23,8 +23,9 @@ docker compose up -d --build
 - Сайт: http://localhost:8000, редактирование — http://localhost:8000/admin/
   (администратор из `DJANGO_SUPERUSER_*` создаётся при первом старте).
 - Altium: PostgreSQL на порту `PG_PORT` (5432), пользователь `altium_reader`.
-  Таблицы для DbLib — представления схемы `altium`: `all_components` и по одному на каждый класс
-  с заполненным «вкладка в Altium».
+  Таблицы для DbLib — представления схемы `altium`, по одному на каждый класс с заполненным
+  «вкладка в Altium» (включает подклассы). `altium.all_components` в DbLib не подключать: Altium путает
+  компоненты, если они одновременно есть и в ней, и во вкладке класса. Она нужна сайту, DBeaver и отчётам.
 
 Пересоздать БД с нуля (**все данные будут удалены**): `docker compose down -v && docker compose up -d`.
 

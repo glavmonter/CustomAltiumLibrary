@@ -7,24 +7,32 @@ from django.utils.html import format_html
 from .images import media_from_upload
 from .models import (Component, ComponentClass, ComponentFootprint, ComponentSupplier, Footprint,
                      Manufacturer, Supplier, Symbol)
+from .widgets import ImageDropWidget
 
 
-def image_tag(media_id, size=64):
+def image_tag(media_id, size=64, link=False):
+    """Картинка из lib.media; link=True — по клику открывается в полном размере."""
     if not media_id:
         return "—"
-    return format_html('<img src="{}" alt="" style="max-width:{}px;max-height:{}px;background:#fff">',
-                       reverse("library:media", args=[media_id]), size, size)
+    url = reverse("library:media", args=[media_id])
+    img = format_html('<img src="{}" alt="" style="max-width:{}px;max-height:{}px;background:#fff;'
+                      'vertical-align:top">', url, size, size)
+    if link:
+        return format_html('<a href="{}" target="_blank" rel="noopener" title="Открыть в полном размере">{}</a>',
+                           url, img)
+    return img
 
 
 # ---------------------------------------------------------------------------
 #  Картинки: загрузка файла в lib.media и привязка к символу / посадочному месту
 # ---------------------------------------------------------------------------
 class ImageUploadField(forms.FileField):
-    widget = forms.FileInput(attrs={"accept": "image/png,image/jpeg,image/webp,image/svg+xml"})
+    widget = ImageDropWidget
 
     def __init__(self, **kwargs):
         kwargs.setdefault("required", False)
-        kwargs.setdefault("help_text", "PNG, JPEG, WebP или SVG. Новый файл заменяет текущую картинку.")
+        kwargs.setdefault("help_text", "PNG, JPEG, WebP или SVG: перетащите файл, вставьте из буфера обмена "
+                                       "(Ctrl+V) или выберите. Новая картинка заменяет текущую.")
         super().__init__(**kwargs)
 
     def clean(self, data, initial=None):
@@ -177,12 +185,12 @@ class ComponentFootprintInline(admin.TabularInline):
     extra = 1
     max_num = 4
     autocomplete_fields = ("footprint",)
-    readonly_fields = ("thumbnail",)
-    fields = ("slot", "footprint", "thumbnail")
+    readonly_fields = ("preview_2d",)
+    fields = ("slot", "footprint", "preview_2d")
 
-    @admin.display(description="Вид")
-    def thumbnail(self, obj):
-        return image_tag(obj.footprint.preview_media_id if obj.footprint_id else None, 48)
+    @admin.display(description="2D-вид")
+    def preview_2d(self, obj):
+        return image_tag(obj.footprint.preview_media_id if obj.footprint_id else None, 200, link=True)
 
 
 class ComponentSupplierInline(admin.TabularInline):
@@ -219,4 +227,4 @@ class ComponentAdmin(admin.ModelAdmin):
 
     @admin.display(description="Картинка УГО")
     def symbol_preview(self, obj):
-        return image_tag(obj.symbol.preview_media_id if obj.symbol_id else None, 240)
+        return image_tag(obj.symbol.preview_media_id if obj.symbol_id else None, 240, link=True)

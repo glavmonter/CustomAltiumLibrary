@@ -1,0 +1,68 @@
+/* Зона загрузки картинки в Django admin; цвета — из переменных темы admin (светлая/тёмная). */
+.image-drop {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: min(100%, 420px);
+  min-height: 120px;
+  padding: 14px;
+  border: 2px dashed var(--border-color, #ccc);
+  border-radius: 8px;
+  background: var(--darkened-bg, #f8f8f8);
+  color: var(--body-quiet-color, #666);
+  text-align: center;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: border-color .15s, background-color .15s;
+}
+.image-drop:hover,
+.image-drop:focus-visible {
+  border-color: var(--link-fg, #447e9b);
+  outline: none;
+}
+.image-drop.is-dragover {
+  border-color: var(--link-fg, #447e9b);
+  border-style: solid;
+  background: var(--selected-bg, #e4e4e4);
+}
+.image-drop.is-error {
+  border-color: var(--error-fg, #ba2121);
+}
+.image-drop__input {
+  /* скрыт визуально, но остаётся в форме и доступен с клавиатуры через зону */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.image-drop__preview {
+  max-width: 100%;
+  max-height: 240px;
+  padding: 6px;
+  border-radius: 4px;
+  background: #fff;   /* картинки из Altium рассчитаны на белый фон */
+  box-sizing: border-box;
+}
+.image-drop.has-file .image-drop__hint {
+  display: none;
+}
+.image-drop__hint kbd {
+  padding: 0 4px;
+  border: 1px solid var(--border-color, #ccc);
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+.image-drop__status {
+  font-size: 12px;
+  word-break: break-all;
+}
+.image-drop.is-error .image-drop__status {
+  color: var(--error-fg, #ba2121);
+}
+.image-drop__reset {
+  font-size: 12px;
+}

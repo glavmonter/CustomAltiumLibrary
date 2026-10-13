@@ -1,0 +1,10 @@
+<div class="image-drop" data-image-drop tabindex="0" role="button"
+     aria-label="Загрузить картинку: перетащите файл, вставьте из буфера обмена или нажмите для выбора">
+  <input type="{{ widget.type }}" name="{{ widget.name }}" class="image-drop__input"{% include "django/forms/widgets/attrs.html" %}>
+  <img class="image-drop__preview" alt="" hidden>
+  <div class="image-drop__hint">
+    Перетащите картинку сюда, вставьте <kbd>Ctrl</kbd>+<kbd>V</kbd> или нажмите, чтобы выбрать файл
+  </div>
+  <div class="image-drop__status" aria-live="polite"></div>
+  <button type="button" class="image-drop__reset" hidden>Отменить</button>
+</div>
