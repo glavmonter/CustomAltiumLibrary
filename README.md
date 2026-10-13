@@ -84,12 +84,13 @@ docker compose up -d
 
 ## Разработка сайта без Docker-образа
 
+База — в Docker, сайт — из `.venv` с автоперезагрузкой при правке кода:
+
 ```powershell
 docker compose up -d db
-cd web
-$env:DJANGO_SECRET_KEY = "dev"; $env:DJANGO_DEBUG = "1"
-$env:DB_USER = "library_owner"; $env:DB_PASSWORD = "<LIBRARY_OWNER_PASSWORD из .env>"
-..\.venv\Scripts\python manage.py migrate
-$env:DB_USER = "library_web"; $env:DB_PASSWORD = "<LIBRARY_WEB_PASSWORD из .env>"
-..\.venv\Scripts\python manage.py runserver
+python -m venv .venv; .venv\Scripts\pip install -r web\requirements.txt   # один раз
+web\run.ps1                   # migrate под library_owner, runserver под library_web
 ```
+
+Сайт откроется на http://127.0.0.1:8001 (8000 занят Docker-контейнером `web`; другой порт — `-Port 8002`,
+без миграций — `-SkipMigrate`). Пароли и ключ `run.ps1` берёт из `.env`.

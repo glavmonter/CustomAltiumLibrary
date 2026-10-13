@@ -1,0 +1,12 @@
+<div class="library-path" data-library-path
+     data-root="{{ widget.root }}" data-extension="{{ widget.extension }}" data-ref-field="{{ widget.ref_field }}">
+  {% include "django/forms/widgets/input.html" %}
+  <div class="library-path__tools">
+    <span class="library-path__hint">Перетащите сюда {{ widget.extension }} или вставьте путь — он обрежется до {{ widget.root }}/</span>
+    <span class="library-path__root" hidden>
+      Папка библиотеки: <b class="library-path__root-name">не выбрана</b>
+      <button type="button" class="library-path__root-pick">Выбрать…</button>
+    </span>
+  </div>
+  <div class="library-path__status" aria-live="polite"></div>
+</div>

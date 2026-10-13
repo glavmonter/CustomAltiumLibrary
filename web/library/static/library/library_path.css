@@ -1,0 +1,44 @@
+/* Поле Library Path / Footprint Path в Django admin; цвета — из переменных темы admin. */
+.library-path {
+  display: inline-block;
+  max-width: 100%;
+  padding: 4px;
+  margin: -4px;
+  border: 2px dashed transparent;
+  border-radius: 6px;
+  transition: border-color .15s, background-color .15s;
+}
+.library-path.is-dragover {
+  border-color: var(--link-fg, #447e9b);
+  background: var(--selected-bg, #e4e4e4);
+}
+.library-path__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--body-quiet-color, #666);
+}
+.library-path__root button {
+  font-size: 12px;
+  margin-left: 4px;
+}
+.library-path__status:empty {
+  display: none;
+}
+.library-path__msg {
+  margin-top: 4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  max-width: 60em;
+}
+.library-path__msg--warn {
+  background: var(--message-warning-bg, #ffc);
+  color: var(--body-fg, #333);
+}
+.library-path__msg--ok {
+  background: var(--message-success-bg, #dfd);
+  color: var(--body-fg, #333);
+}

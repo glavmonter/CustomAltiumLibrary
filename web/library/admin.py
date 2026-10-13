@@ -7,7 +7,8 @@ from django.utils.html import format_html
 from .images import media_from_upload
 from .models import (Component, ComponentClass, ComponentFootprint, ComponentSupplier, Footprint,
                      Manufacturer, Supplier, Symbol)
-from .widgets import ImageDropWidget
+from .paths import FOOTPRINTS, SYMBOLS, normalize_library_path
+from .widgets import ImageDropWidget, LibraryPathWidget
 
 
 def image_tag(media_id, size=64, link=False):
@@ -64,6 +65,10 @@ class SymbolForm(forms.ModelForm):
     class Meta:
         model = Symbol
         fields = ["library_ref", "library_path"]
+        widgets = {"library_path": LibraryPathWidget(SYMBOLS, ".SchLib", ref_field="library_ref")}
+
+    def clean_library_path(self):
+        return normalize_library_path(self.cleaned_data["library_path"], SYMBOLS)
 
 
 class FootprintForm(forms.ModelForm):
@@ -75,6 +80,10 @@ class FootprintForm(forms.ModelForm):
     class Meta:
         model = Footprint
         fields = ["footprint_ref", "footprint_path", "description"]
+        widgets = {"footprint_path": LibraryPathWidget(FOOTPRINTS, ".PcbLib", ref_field="footprint_ref")}
+
+    def clean_footprint_path(self):
+        return normalize_library_path(self.cleaned_data["footprint_path"], FOOTPRINTS)
 
 
 @admin.register(Symbol)
