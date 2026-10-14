@@ -182,4 +182,5 @@ def analyze_library_file(request):
                             status=422)
     return JsonResponse({"kind": contents.kind, "names": contents.names,
                          "source": contents.source, "warnings": contents.warnings,
+                         "descriptions": contents.descriptions,
                          "previews": render_previews(data, contents.kind, contents.names)})

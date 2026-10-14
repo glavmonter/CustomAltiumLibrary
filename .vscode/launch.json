@@ -11,7 +11,16 @@
             "program": "${workspaceFolder}/tests/print_sch_parts.py",
             "cwd": "${workspaceFolder}/tests",
             "console": "integratedTerminal",
-            "args": ["Two_symbols.SchLib"]
+            "args": ["RPSLib_PMIC.SchLib"]
+        },
+                {
+            "name": "print_pcb_description.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/tests/print_pcb_description.py",
+            "cwd": "${workspaceFolder}/tests",
+            "console": "integratedTerminal",
+            "args": ["One_layout.PcbLib"]
         }
     ]
 }

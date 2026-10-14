@@ -39,6 +39,7 @@ class LibraryContents:
     names: list[str]                # символы или посадочные места, в порядке файла
     source: str                     # откуда взяты имена: header / storages
     warnings: list[str] = field(default_factory=list)
+    descriptions: dict[str, str] = field(default_factory=dict)   # имя → Description из файла
 
 
 def read_library(data: bytes) -> LibraryContents:
@@ -64,6 +65,11 @@ def read_library(data: bytes) -> LibraryContents:
         if not result.names:
             result.names = _root_storages(ole, kind)
             result.source = "storages"
+        try:
+            found = (_schlib_descriptions if kind == SCHLIB else _pcblib_descriptions)(ole)
+        except (struct.error, IndexError, ValueError, KeyError, OSError):
+            found = {}   # описание — подсказка, без него разбор файла всё равно полезен
+        result.descriptions = {name: found[name] for name in result.names if found.get(name)}
         return result
 
 
@@ -97,6 +103,33 @@ def _schlib_names(ole):
             raise KeyError(f"нет LIBREF{i}")
         names.append(name)
     return names
+
+
+def _schlib_descriptions(ole):
+    """FileHeader: COMPDESCR<i> (или %UTF8%COMPDESCR<i>) для символа LIBREF<i>."""
+    params, _ = _parameter_block(_read(ole, "FileHeader"))
+    descriptions = {}
+    for i in range(int(params.get("COMPCOUNT", "0"))):
+        name = params.get(f"%UTF8%LIBREF{i}") or params.get(f"LIBREF{i}")
+        text = params.get(f"%UTF8%COMPDESCR{i}") or params.get(f"COMPDESCR{i}")
+        if name and text:
+            descriptions[name] = text
+    return descriptions
+
+
+def _pcblib_descriptions(ole):
+    """<хранилище посадочного места>/Parameters: |PATTERN=<полное имя>|…|DESCRIPTION=…|.
+    Сопоставляем по PATTERN, а не по имени хранилища: оно обрезано до 31 символа."""
+    descriptions = {}
+    for entry in ole.listdir(streams=True, storages=False):
+        if len(entry) != 2 or entry[1] != "Parameters" or entry[0].lower() in SERVICE_STORAGES[PCBLIB]:
+            continue
+        params, _ = _parameter_block(_read(ole, "/".join(entry)))
+        name = params.get("%UTF8%PATTERN") or params.get("PATTERN")
+        text = params.get("%UTF8%DESCRIPTION") or params.get("DESCRIPTION")
+        if name and text:
+            descriptions[name] = text
+    return descriptions
 
 
 def _pcblib_names(ole):

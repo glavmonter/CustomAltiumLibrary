@@ -8,3 +8,4 @@ web/staticfiles/
 *.SchLib
 *.PcbLib
 *.DbLib
+*.Zip

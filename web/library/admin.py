@@ -92,7 +92,8 @@ class FootprintForm(forms.ModelForm):
         model = Footprint
         fields = ["footprint_ref", "footprint_path", "description"]
         widgets = {"footprint_path": LibraryPathWidget(FOOTPRINTS, ".PcbLib", ref_field="footprint_ref",
-                                                       preview_field="preview_upload")}
+                                                       preview_field="preview_upload",
+                                                       description_field="description")}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

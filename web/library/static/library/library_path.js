@@ -27,6 +27,8 @@
    *
    * @param {File} file          перетащенный или вставленный файл
    * @param {"symbols"|"footprints"} root  что ожидается: символы или посадочные места
+   * @param {{onProgress?: function({phase: "upload"|"processing", loaded?: number, total?: number}),
+   *          signal?: AbortSignal}} [options]  прогресс отправки и отмена
    * @returns {Promise<{names: string[], stub: boolean, warnings: string[],
    *                    previews: Object<string, {svg?: string, error?: string}>}>}  previews — SVG от pyaltiumlib
    * @throws {Error} с понятным текстом; error.fileProblem = true — виноват сам файл
@@ -37,28 +39,43 @@
     return Object.assign(new Error(message), {fileProblem: true});
   }
 
-  async function analyzeLibraryFile(file, root) {
+  function analyzeLibraryFile(file, root, {onProgress, signal} = {}) {
     const widget = document.querySelector(`[data-library-path][data-root="${root}"]`)
       || document.querySelector("[data-library-path]");
     const maxBytes = Number(widget.dataset.maxBytes);
     if (maxBytes && file.size > maxBytes) {
-      throw fileProblem(`файл ${(file.size / 1048576).toFixed(1)} МБ, допустимо до ${Math.round(maxBytes / 1048576)} МБ.`);
+      return Promise.reject(fileProblem(
+        `файл ${(file.size / 1048576).toFixed(1)} МБ, допустимо до ${Math.round(maxBytes / 1048576)} МБ.`));
     }
-    const url = `${widget.dataset.analyzeUrl}?root=${encodeURIComponent(root)}`;
-    const response = await fetch(url, {
-      method: "POST",
-      body: file,
-      credentials: "same-origin",
-      headers: {"Content-Type": "application/octet-stream", "X-CSRFToken": csrfToken()},
+    const progress = onProgress || (() => {});
+    // XMLHttpRequest, а не fetch: только он сообщает, сколько байт уже отправлено
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${widget.dataset.analyzeUrl}?root=${encodeURIComponent(root)}`);
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.setRequestHeader("X-CSRFToken", csrfToken());
+      xhr.upload.onprogress = (e) => progress({phase: "upload", loaded: e.loaded, total: e.lengthComputable ? e.total : file.size});
+      xhr.upload.onload = () => progress({phase: "processing"});
+      xhr.onerror = () => reject(new Error("соединение с сервером прервано (нет связи или сервер закрыл соединение)."));
+      xhr.onabort = () => reject(Object.assign(new Error("загрузка отменена."), {aborted: true}));
+      xhr.onload = () => {
+        let data = null;
+        try { data = JSON.parse(xhr.responseText); } catch (e) { data = null; }
+        if (xhr.status < 200 || xhr.status >= 300 || !data) {
+          const message = (data && data.error) || `сервер ответил ${xhr.status}.`;
+          // 400 — пустой файл, 413 — больше лимита, 422 — не библиотека Altium или не тот тип
+          reject([400, 413, 422].includes(xhr.status) && data ? fileProblem(message) : new Error(message));
+          return;
+        }
+        resolve({names: data.names || [], stub: false, warnings: data.warnings || [], previews: data.previews || {},
+                 descriptions: data.descriptions || {}});
+      };
+      if (signal) {
+        if (signal.aborted) { xhr.abort(); return; }
+        signal.addEventListener("abort", () => xhr.abort(), {once: true});
+      }
+      xhr.send(file);
     });
-    let data = null;
-    try { data = await response.json(); } catch (e) { data = null; }
-    if (!response.ok || !data) {
-      const message = (data && data.error) || `сервер ответил ${response.status}.`;
-      // 400 — пустой файл, 413 — больше лимита, 422 — не библиотека Altium или не тот тип
-      throw [400, 413, 422].includes(response.status) && data ? fileProblem(message) : new Error(message);
-    }
-    return {names: data.names || [], stub: false, warnings: data.warnings || [], previews: data.previews || {}};
   }
 
   /**
@@ -157,26 +174,66 @@
     // ---- блокировка сохранения формы, пока путь указывает на файл с несколькими элементами ----
     let rejectedPath = null;       // путь к отклонённому файлу, пока ошибка не исправлена
     let previousGoodPath = "";    // что было в поле до отклонённого файла
-    function setBlocked(blocked) {
+    // Блокировки формы: ключ → {widget, title}. Ключ — этот виджет (ошибка в файле) или busyKey (идёт проверка).
+    const busyKey = {};
+    function lock(key, title) {
       if (!form) return;
-      const blockers = form.libraryPathBlockers || (form.libraryPathBlockers = new Set());
-      if (blocked) blockers.add(widget); else blockers.delete(widget);
-      widget.classList.toggle("has-error", blocked);
-      const locked = blockers.size > 0;
+      const locks = form.libraryPathLocks || (form.libraryPathLocks = new Map());
+      if (title) locks.set(key, {widget, title}); else locks.delete(key);
+      const first = locks.values().next().value;
       form.querySelectorAll("input[type=submit], button[type=submit]").forEach((button) => {
-        button.disabled = locked;
-        button.title = locked ? "Сохранение недоступно: исправьте ошибку в пути к файлу библиотеки" : "";
+        button.disabled = Boolean(first);
+        button.title = first ? first.title : "";
       });
       if (!form.libraryPathGuard) {   // Enter в поле формы тоже отправляет её
         form.libraryPathGuard = true;
         form.addEventListener("submit", (event) => {
-          if (form.libraryPathBlockers.size) {
+          const blocker = form.libraryPathLocks.values().next().value;
+          if (blocker) {
             event.preventDefault();
-            form.libraryPathBlockers.values().next().value.scrollIntoView({block: "center"});
+            blocker.widget.scrollIntoView({block: "center"});
           }
         });
       }
     }
+    function setBlocked(blocked) {
+      widget.classList.toggle("has-error", blocked);
+      lock(widget, blocked ? "Сохранение недоступно: исправьте ошибку в пути к файлу библиотеки" : null);
+    }
+
+    // ---- индикатор загрузки файла на сервер ----
+    const progressBox = widget.querySelector(".library-path__progress");
+    const progressBar = progressBox.querySelector("progress");
+    const progressText = progressBox.querySelector(".library-path__progress-text");
+    let currentUpload = null;      // AbortController текущей проверки
+    let progressTimer = null;
+    const megabytes = (bytes) => (bytes / 1048576).toLocaleString("ru-RU", {minimumFractionDigits: 1, maximumFractionDigits: 1});
+    function startProgress(controller) {
+      clearTimeout(progressTimer);
+      progressBar.max = 100;
+      progressBar.value = 0;
+      progressText.textContent = "Загрузка файла…";
+      // на быстром соединении индикатор не успевает мигнуть
+      progressTimer = setTimeout(() => { progressBox.hidden = false; }, 200);
+      progressBox.querySelector(".library-path__progress-cancel").onclick = () => controller.abort();
+      lock(busyKey, "Идёт проверка файла — дождитесь окончания");
+    }
+    function showProgress({phase, loaded, total}) {
+      if (phase === "upload" && total) {
+        const percent = Math.min(100, Math.round(loaded / total * 100));
+        progressBar.value = percent;
+        progressText.textContent = `Загрузка: ${percent} % · ${megabytes(loaded)} из ${megabytes(total)} МБ`;
+      } else if (phase === "processing") {
+        progressBar.removeAttribute("value");   // неопределённый прогресс
+        progressText.textContent = "Разбор и отрисовка на сервере…";
+      }
+    }
+    function stopProgress() {
+      clearTimeout(progressTimer);
+      progressBox.hidden = true;
+      lock(busyKey, null);
+    }
+
     let rejectReason = null;       // "multi" — несколько элементов, "invalid" — неправильный файл
     function clearRejection() {
       if (rejectedPath === null) return;
@@ -218,11 +275,52 @@
     // ---- сгенерированные превью (pyaltiumlib на сервере) ----
     let previews = {};        // {имя: {svg} | {error}} из последнего разобранного файла
     let fileNames = [];       // имена элементов этого файла
+    let descriptions = {};    // {имя: Description из файла}
     let lastPreviewName = null;
     function forgetFile() {
       previews = {};
+      descriptions = {};
       fileNames = [];
       lastPreviewName = null;
+    }
+
+    // ---- Description элемента → поле «Описание» (если оно есть в форме) ----
+    const descriptionInput = form && widget.dataset.descriptionField
+      && form.querySelector(`[name="${widget.dataset.descriptionField}"]`);
+    let descriptionAuto = null;   // текст, подставленный нами: его можно заменить при смене элемента
+    if (descriptionInput) {
+      descriptionInput.addEventListener("input", (event) => {
+        if (event.isTrusted) descriptionAuto = null;   // человек правит сам — больше не трогаем
+      });
+    }
+
+    /** Подставляет Description элемента name, не перезаписывая то, что человек ввёл сам. */
+    function applyDescription(name, messages) {
+      if (!descriptionInput) return;
+      const text = descriptions[name];
+      const current = descriptionInput.value.trim();
+      if (!text) {
+        // у элемента нет описания: убираем подставленное нами для предыдущего элемента
+        if (descriptionAuto && current === descriptionAuto) {
+          descriptionInput.value = "";
+          descriptionAuto = null;
+          messages.push(["info", `У «${name}» в файле нет описания.`]);
+        }
+        return;
+      }
+      if (current === text) return;
+      const fill = () => {
+        descriptionInput.value = text;
+        descriptionAuto = text;
+        descriptionInput.dispatchEvent(new Event("input", {bubbles: true}));
+      };
+      if (!current || current === descriptionAuto) {
+        fill();
+        messages.push(["ok", `Описание из файла: «${text}».`]);
+      } else {
+        messages.push(["info", "Описание уже заполнено — из файла не подставлено.",
+          {label: "Подставить описание из файла", run: fill}]);
+      }
     }
     const imageZone = () => widget.dataset.previewField && window.ImageDrop
       && window.ImageDrop.zoneFor(widget.dataset.previewField);
@@ -300,11 +398,37 @@
         return;
       }
 
+      if (currentUpload) currentUpload.abort();   // новый файл отменяет проверку предыдущего
+      const controller = new AbortController();
+      currentUpload = controller;
+      startProgress(controller);
+      let result;
       try {
-        const result = await window.AltiumLibrary.analyzeLibraryFile(file, root);
+        result = await window.AltiumLibrary.analyzeLibraryFile(file, root,
+          {onProgress: showProgress, signal: controller.signal});
+      } catch (e) {
+        if (controller !== currentUpload) return;   // проверку сменил другой файл — он и сообщит
+        currentUpload = null;
+        stopProgress();
+        if (e.fileProblem) {
+          reject("invalid", `Неправильный файл: ${e.message}`, previousPath);
+          return;
+        }
+        // сбой сети/сервера или отмена — файл не проверен, но и не признан неправильным
+        messages.push(["warn", e.aborted ? "Проверка файла отменена — файл не проверен."
+          : `Не удалось проверить файл: ${e.message || e}`]);
+        report(messages);
+        return;
+      }
+      if (controller !== currentUpload) return;
+      currentUpload = null;
+      stopProgress();
+
+      try {
         const names = (result && result.names) || [];
         const words = WORDS[root];
         previews = (result && result.previews) || {};
+        descriptions = (result && result.descriptions) || {};
         fileNames = names;
         lastPreviewName = null;
         ((result && result.warnings) || []).forEach((w) => messages.push(["warn", w]));
@@ -327,14 +451,12 @@
             + (result.stub ? " — взято из имени файла, проверьте." : ".")]);
         }
         const chosen = names.includes(ref) ? ref : (names.length === 1 ? names[0] : null);
-        if (chosen) applyPreview(chosen, messages);
-      } catch (e) {
-        if (e.fileProblem) {
-          reject("invalid", `Неправильный файл: ${e.message}`, previousPath);
-          return;
+        if (chosen) {
+          applyDescription(chosen, messages);
+          applyPreview(chosen, messages);
         }
-        // сбой сети/сервера — файл не проверен, но и не признан неправильным
-        messages.push(["warn", `Не удалось проверить файл: ${e.message || e}`]);
+      } catch (e) {
+        messages.push(["warn", `Не удалось обработать ответ сервера: ${e.message || e}`]);
       }
       report(messages);
     }
@@ -398,7 +520,7 @@
       }
     });
 
-    // ---- Ref, введённый вручную, при файле с несколькими элементами ----
+    // ---- Ref, введённый вручную, при файле с несколькими элементами (картинка и описание элемента) ----
     // Правка Ref человеком снимает блокировку «несколько элементов» (указан конкретный элемент;
     // неправильный файл она не исправляет). Ошибка становится предупреждением, которое остаётся
     // на виду, пока поле работает с этим файлом; к нему — сообщение о картинке выбранного элемента.
@@ -419,8 +541,9 @@
         if (unblocked) clearRejection();
         const name = refInput.value.trim();
         const messages = [];
-        if (previews[name] && name !== lastPreviewName) {
+        if (name !== lastPreviewName && (previews[name] || descriptions[name])) {
           lastPreviewName = name;
+          applyDescription(name, messages);
           applyPreview(name, messages);
         }
         if (unblocked || messages.length) report(refMessages(messages));

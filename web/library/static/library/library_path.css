@@ -62,3 +62,22 @@
   box-shadow: 0 0 0 1px var(--error-fg, #ba2121);
   outline-color: var(--error-fg, #ba2121);
 }
+.library-path__progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--body-quiet-color, #666);
+}
+.library-path__progress[hidden] {
+  display: none;
+}
+.library-path__progress progress {
+  width: 220px;
+  height: 10px;
+  accent-color: var(--link-fg, #447e9b);
+}
+.library-path__progress button {
+  font-size: 12px;
+}
