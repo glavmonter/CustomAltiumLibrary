@@ -42,3 +42,23 @@
   background: var(--message-success-bg, #dfd);
   color: var(--body-fg, #333);
 }
+.library-path__msg--info {
+  background: var(--darkened-bg, #f8f8f8);
+  border: 1px solid var(--hairline-color, #e8e8e8);
+  color: var(--body-fg, #333);
+}
+.library-path__msg button {
+  font-size: 12px;
+  margin-left: 4px;
+}
+.library-path__msg--error {
+  background: var(--message-error-bg, #ffefef);
+  color: var(--error-fg, #ba2121);
+  font-weight: 600;
+}
+.library-path.has-error input[type=text],
+.library-path.has-error input[type=text]:focus {
+  border-color: var(--error-fg, #ba2121);
+  box-shadow: 0 0 0 1px var(--error-fg, #ba2121);
+  outline-color: var(--error-fg, #ba2121);
+}

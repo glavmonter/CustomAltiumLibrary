@@ -10,29 +10,55 @@
   "use strict";
 
   // ---------------------------------------------------------------------------
-  //  Разбор файла библиотеки — ЗАГЛУШКА
+  //  Разбор файла библиотеки — на сервере (library/altium_files.py)
   // ---------------------------------------------------------------------------
 
+  function csrfToken() {
+    const field = document.querySelector("input[name=csrfmiddlewaretoken]");
+    if (field) return field.value;
+    const cookie = document.cookie.split("; ").find((c) => c.startsWith("csrftoken="));
+    return cookie ? decodeURIComponent(cookie.split("=")[1]) : "";
+  }
+
   /**
-   * ЗАГЛУШКА: найти в файле библиотеки Altium символы (.SchLib) или посадочные места (.PcbLib).
-   *
-   * Что должна делать настоящая реализация:
-   *   1. прочитать файл: `const buf = await file.arrayBuffer()`;
-   *   2. разобрать OLE Compound File (CFB) — формат .SchLib / .PcbLib;
-   *   3. каждый символ / посадочное место — отдельное хранилище (storage) в корне CFB;
-   *      служебные потоки (FileHeader, Storage, SectionKeys, Library…) пропустить;
-   *      длинные имена (> 31 символа) восстановить из потока SectionKeys;
-   *   4. вернуть имена найденных элементов.
-   *
-   * Пока, по соглашению «один элемент — один файл», возвращает имя файла без расширения.
+   * Находит в файле библиотеки Altium символы (.SchLib) или посадочные места (.PcbLib)
+   * и получает их SVG-превью. Файл отправляется на сервер телом запроса, сервер разбирает его и не сохраняет.
    * Подменить можно, не трогая остальной код: `AltiumLibrary.analyzeLibraryFile = async (file, root) => …`.
    *
    * @param {File} file          перетащенный или вставленный файл
-   * @param {"symbols"|"footprints"} root  что искать: символы или посадочные места
-   * @returns {Promise<{names: string[], stub: boolean}>}  stub=true — результат не из содержимого файла
+   * @param {"symbols"|"footprints"} root  что ожидается: символы или посадочные места
+   * @returns {Promise<{names: string[], stub: boolean, warnings: string[],
+   *                    previews: Object<string, {svg?: string, error?: string}>}>}  previews — SVG от pyaltiumlib
+   * @throws {Error} с понятным текстом; error.fileProblem = true — виноват сам файл
+   *                  (слишком большой, не библиотека Altium, не тот тип), иначе — сбой сети/сервера
    */
+  /** Ошибка из-за самого файла (не тот, повреждён, слишком большой) — в отличие от сбоя сети/сервера. */
+  function fileProblem(message) {
+    return Object.assign(new Error(message), {fileProblem: true});
+  }
+
   async function analyzeLibraryFile(file, root) {
-    return {names: [file.name.replace(/\.[^.]+$/, "")], stub: true};
+    const widget = document.querySelector(`[data-library-path][data-root="${root}"]`)
+      || document.querySelector("[data-library-path]");
+    const maxBytes = Number(widget.dataset.maxBytes);
+    if (maxBytes && file.size > maxBytes) {
+      throw fileProblem(`файл ${(file.size / 1048576).toFixed(1)} МБ, допустимо до ${Math.round(maxBytes / 1048576)} МБ.`);
+    }
+    const url = `${widget.dataset.analyzeUrl}?root=${encodeURIComponent(root)}`;
+    const response = await fetch(url, {
+      method: "POST",
+      body: file,
+      credentials: "same-origin",
+      headers: {"Content-Type": "application/octet-stream", "X-CSRFToken": csrfToken()},
+    });
+    let data = null;
+    try { data = await response.json(); } catch (e) { data = null; }
+    if (!response.ok || !data) {
+      const message = (data && data.error) || `сервер ответил ${response.status}.`;
+      // 400 — пустой файл, 413 — больше лимита, 422 — не библиотека Altium или не тот тип
+      throw [400, 413, 422].includes(response.status) && data ? fileProblem(message) : new Error(message);
+    }
+    return {names: data.names || [], stub: false, warnings: data.warnings || [], previews: data.previews || {}};
   }
 
   /**
@@ -102,8 +128,9 @@
   //  Поле пути
   // ---------------------------------------------------------------------------
   const WORDS = {
-    symbols: {one: "символ", few: "символа", many: "символов"},
-    footprints: {one: "посадочное место", few: "посадочных места", many: "посадочных мест"},
+    symbols: {one: "символ", few: "символа", many: "символов", oneItem: "один символ"},
+    footprints: {one: "посадочное место", few: "посадочных места", many: "посадочных мест",
+                 oneItem: "одно посадочное место"},
   };
 
   function plural(n, w) {
@@ -127,13 +154,100 @@
     const refLabel = refLabelEl ? refLabelEl.textContent.replace(/:\s*$/, "").trim() : widget.dataset.refField;
     const status = widget.querySelector(".library-path__status");
 
-    function report(messages) {
-      status.replaceChildren(...messages.map(([level, text]) => {
+    // ---- блокировка сохранения формы, пока путь указывает на файл с несколькими элементами ----
+    let rejectedPath = null;       // путь к отклонённому файлу, пока ошибка не исправлена
+    let previousGoodPath = "";    // что было в поле до отклонённого файла
+    function setBlocked(blocked) {
+      if (!form) return;
+      const blockers = form.libraryPathBlockers || (form.libraryPathBlockers = new Set());
+      if (blocked) blockers.add(widget); else blockers.delete(widget);
+      widget.classList.toggle("has-error", blocked);
+      const locked = blockers.size > 0;
+      form.querySelectorAll("input[type=submit], button[type=submit]").forEach((button) => {
+        button.disabled = locked;
+        button.title = locked ? "Сохранение недоступно: исправьте ошибку в пути к файлу библиотеки" : "";
+      });
+      if (!form.libraryPathGuard) {   // Enter в поле формы тоже отправляет её
+        form.libraryPathGuard = true;
+        form.addEventListener("submit", (event) => {
+          if (form.libraryPathBlockers.size) {
+            event.preventDefault();
+            form.libraryPathBlockers.values().next().value.scrollIntoView({block: "center"});
+          }
+        });
+      }
+    }
+    let rejectReason = null;       // "multi" — несколько элементов, "invalid" — неправильный файл
+    function clearRejection() {
+      if (rejectedPath === null) return;
+      rejectedPath = null;
+      rejectReason = null;
+      setBlocked(false);
+      status.querySelectorAll(".library-path__msg--error").forEach((line) => line.remove());
+    }
+    /** Файл не принят: путь к нему остаётся в поле, сохранение блокируется до исправления. */
+    function reject(reason, text, previousPath) {
+      if (reason !== "multi") forgetFile();   // превью многоэлементного файла нужны: Ref выберет элемент
+      rejectedPath = input.value;
+      rejectReason = reason;
+      previousGoodPath = previousPath;
+      setBlocked(true);
+      report([["error", `${text} Сохранение заблокировано — перетащите другой файл или исправьте путь.`,
+        {label: "Вернуть прежний путь", run: () => { setPath(previousPath); clearRejection(); }}]]);
+    }
+
+    // messages: [уровень, текст, необязательное действие {label, run}]
+    function report(messages, append = false) {
+      const lines = messages.map(([level, text, action]) => {
         const line = document.createElement("div");
         line.className = `library-path__msg library-path__msg--${level}`;
         line.textContent = text;
+        if (action) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = action.label;
+          button.addEventListener("click", () => { action.run(); line.remove(); });
+          line.append(" ", button);
+        }
         return line;
-      }));
+      });
+      if (append) status.append(...lines);
+      else status.replaceChildren(...lines);
+    }
+
+    // ---- сгенерированные превью (pyaltiumlib на сервере) ----
+    let previews = {};        // {имя: {svg} | {error}} из последнего разобранного файла
+    let fileNames = [];       // имена элементов этого файла
+    let lastPreviewName = null;
+    function forgetFile() {
+      previews = {};
+      fileNames = [];
+      lastPreviewName = null;
+    }
+    const imageZone = () => widget.dataset.previewField && window.ImageDrop
+      && window.ImageDrop.zoneFor(widget.dataset.previewField);
+
+    /** Подставляет превью элемента name в зону картинки, не трогая выбранное вручную и сохранённое. */
+    function applyPreview(name, messages) {
+      const zone = imageZone();
+      const preview = previews[name];
+      if (!zone || !preview) return;
+      if (preview.error) {
+        messages.push(["warn", `Картинку для «${name}» сгенерировать не удалось: ${preview.error}. Выберите её вручную.`]);
+        return;
+      }
+      const file = new File([preview.svg], `${name.replace(/[\\/:*?"<>|]/g, "_")}.svg`, {type: "image/svg+xml"});
+      const note = `Сгенерировано из файла: «${name}» — сохраните форму или замените своей картинкой`;
+      const use = {label: "Подставить сгенерированную", run: () => window.ImageDrop.setFile(zone, file, note)};
+      const source = window.ImageDrop.source(zone);
+      if (source === "manual") {
+        messages.push(["info", "Картинка уже выбрана вручную — сгенерированная не подставлена.", use]);
+      } else if (source !== "auto" && window.ImageDrop.hasCurrent(zone)) {
+        messages.push(["info", `Для «${name}» сгенерирована картинка; сохранённая не заменена.`, use]);
+      } else {
+        window.ImageDrop.setFile(zone, file, note);
+        messages.push(["ok", `Картинка сгенерирована из файла: «${name}».`]);
+      }
     }
 
     function setPath(path) {
@@ -155,9 +269,8 @@
 
     async function acceptFile(file, handlePromise) {
       const messages = [];
-      if (!file.name.toLowerCase().endsWith(extension)) {
-        messages.push(["warn", `Ожидается файл ${widget.dataset.extension}, а получен «${file.name}».`]);
-      }
+      const previousPath = rejectedPath === null ? input.value : previousGoodPath;
+      clearRejection();
 
       const resolved = await pathFromHandle(handlePromise);
       if (resolved.path) {
@@ -182,28 +295,53 @@
         }
       }
 
+      if (!file.name.toLowerCase().endsWith(extension)) {
+        reject("invalid", `Неправильный файл: ожидается ${widget.dataset.extension}, а получен «${file.name}».`, previousPath);
+        return;
+      }
+
       try {
         const result = await window.AltiumLibrary.analyzeLibraryFile(file, root);
         const names = (result && result.names) || [];
         const words = WORDS[root];
+        previews = (result && result.previews) || {};
+        fileNames = names;
+        lastPreviewName = null;
+        ((result && result.warnings) || []).forEach((w) => messages.push(["warn", w]));
+        const ref = refInput ? refInput.value.trim() : "";
         if (names.length >= 2) {
-          messages.push(["warn", `В файле ${names.length} ${plural(names.length, words)}: ${names.join(", ")}. `
-            + `Принято: один ${words.one} — один файл. ${refLabel} заполните вручную.`]);
-        } else if (names.length === 0) {
-          messages.push(["warn", `В файле не найдено ни одного: ${words.one}.`]);
-        } else if (refInput && !refInput.value.trim()) {
+          // нужен файл ровно с одним элементом
+          reject("multi", `В файле ${names.length} ${plural(names.length, words)}: ${names.join(", ")}. `
+            + `Нужен файл с одним элементом: ${words.oneItem} — один файл. `
+            + `Или впишите в ${refLabel} нужный элемент — его картинка подставится.`, previousPath);
+          return;
+        }
+        if (names.length === 0) {
+          reject("invalid", `Неправильный файл: в нём нет ни одного элемента (${words.many}).`, previousPath);
+          return;
+        }
+        if (refInput && !refInput.value.trim()) {
           refInput.value = names[0];
           refInput.dispatchEvent(new Event("input", {bubbles: true}));
           messages.push(["ok", `${refLabel}: «${names[0]}»`
             + (result.stub ? " — взято из имени файла, проверьте." : ".")]);
         }
+        const chosen = names.includes(ref) ? ref : (names.length === 1 ? names[0] : null);
+        if (chosen) applyPreview(chosen, messages);
       } catch (e) {
-        messages.push(["warn", `Не удалось разобрать файл: ${e.message || e}`]);
+        if (e.fileProblem) {
+          reject("invalid", `Неправильный файл: ${e.message}`, previousPath);
+          return;
+        }
+        // сбой сети/сервера — файл не проверен, но и не признан неправильным
+        messages.push(["warn", `Не удалось проверить файл: ${e.message || e}`]);
       }
       report(messages);
     }
 
     function acceptText(text) {
+      clearRejection();
+      forgetFile();   // путь указывает на другой файл — его содержимого мы не видели
       const normalized = normalizePath(text, root);
       setPath(normalized.path);
       const messages = [];
@@ -258,6 +396,49 @@
         e.preventDefault();
         acceptText(text);
       }
+    });
+
+    // ---- Ref, введённый вручную, при файле с несколькими элементами ----
+    // Правка Ref человеком снимает блокировку «несколько элементов» (указан конкретный элемент;
+    // неправильный файл она не исправляет). Ошибка становится предупреждением, которое остаётся
+    // на виду, пока поле работает с этим файлом; к нему — сообщение о картинке выбранного элемента.
+    function multiNote() {
+      const words = WORDS[root];
+      return ["warn", `В файле ${fileNames.length} ${plural(fileNames.length, words)}: ${fileNames.join(", ")}. `
+        + `Принято: ${words.oneItem} — один файл; используется элемент, указанный в ${refLabel}.`];
+    }
+
+    function refMessages(extra) {
+      return fileNames.length > 1 ? [multiNote(), ...extra] : extra;
+    }
+
+    if (refInput) {
+      refInput.addEventListener("input", (event) => {
+        if (!event.isTrusted) return;
+        const unblocked = rejectReason === "multi";
+        if (unblocked) clearRejection();
+        const name = refInput.value.trim();
+        const messages = [];
+        if (previews[name] && name !== lastPreviewName) {
+          lastPreviewName = name;
+          applyPreview(name, messages);
+        }
+        if (unblocked || messages.length) report(refMessages(messages));
+      });
+      refInput.addEventListener("change", () => {
+        const name = refInput.value.trim();
+        // пока действует ошибка, её не трогаем: имена файла в ней уже перечислены
+        // (Enter в поле тоже вызывает change)
+        if (rejectedPath !== null) return;
+        if (fileNames.length > 1 && name && !fileNames.includes(name)) {
+          report(refMessages([["warn", `«${name}» нет в файле. В нём: ${fileNames.join(", ")}.`]]));
+        }
+      });
+    }
+
+    // ---- ручная правка пути снимает ошибку (синтетические события от setPath не в счёт) ----
+    input.addEventListener("input", (event) => {
+      if (event.isTrusted && rejectedPath !== null && input.value.trim() !== rejectedPath) clearRejection();
     });
 
     // ---- ручной ввод: нормализуем при уходе с поля ----

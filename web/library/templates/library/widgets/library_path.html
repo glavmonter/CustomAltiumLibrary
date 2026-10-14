@@ -1,5 +1,7 @@
 <div class="library-path" data-library-path
-     data-root="{{ widget.root }}" data-extension="{{ widget.extension }}" data-ref-field="{{ widget.ref_field }}">
+     data-root="{{ widget.root }}" data-extension="{{ widget.extension }}" data-ref-field="{{ widget.ref_field }}"
+     data-analyze-url="{{ widget.analyze_url }}" data-max-bytes="{{ widget.max_bytes }}"
+     data-preview-field="{{ widget.preview_field }}">
   {% include "django/forms/widgets/input.html" %}
   <div class="library-path__tools">
     <span class="library-path__hint">Перетащите сюда {{ widget.extension }} или вставьте путь — он обрежется до {{ widget.root }}/</span>

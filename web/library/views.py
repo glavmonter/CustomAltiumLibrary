@@ -1,12 +1,16 @@
 from collections import defaultdict
 
+from django.conf import settings
 from django.core.paginator import Paginator
 from django.db.models import Count, Prefetch, Q
-from django.http import HttpResponse, HttpResponseNotModified
+from django.http import HttpResponse, HttpResponseNotModified, JsonResponse
 from django.shortcuts import get_object_or_404, render
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 
+from .altium_files import KIND_TITLES, PCBLIB, SCHLIB, LibraryFileError, read_library
+from .altium_render import render_previews
 from .models import Component, ComponentClass, ComponentFootprint, Manufacturer, Media
+from .paths import FOOTPRINTS, SYMBOLS
 
 PAGE_SIZE = 50
 
@@ -140,3 +144,42 @@ def media(request, pk):
     # SVG загружают пользователи — запрещаем в нём скрипты при открытии напрямую
     response["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
     return response
+
+
+@require_POST
+def analyze_library_file(request):
+    """Разбор .SchLib / .PcbLib: имена символов или посадочных мест и их SVG-превью. Файл не сохраняется.
+
+    Тело запроса — сам файл (application/octet-stream), а не форма: тогда Django не разбирает
+    тело заранее, и слишком большой файл отклоняется по Content-Length, не будучи принятым.
+    ?root=symbols|footprints — что ожидается. CSRF-токен — в заголовке X-CSRFToken.
+    """
+    if not (request.user.is_active and request.user.is_staff):
+        return JsonResponse({"error": "Нужен вход в админку."}, status=403)
+
+    limit = settings.LIBRARY_MAX_LIBRARY_FILE_BYTES
+    too_big = JsonResponse({"error": f"Файл больше {limit // (1024 * 1024)} МБ."}, status=413)
+    try:
+        declared = int(request.META.get("CONTENT_LENGTH") or 0)
+    except ValueError:
+        declared = 0
+    if declared > limit:
+        return too_big
+    data = request.read(limit + 1)
+    if len(data) > limit:
+        return too_big
+    if not data:
+        return JsonResponse({"error": "Файл пустой."}, status=400)
+
+    try:
+        contents = read_library(data)
+    except LibraryFileError as exc:
+        return JsonResponse({"error": str(exc)}, status=422)
+
+    expected = {SYMBOLS: SCHLIB, FOOTPRINTS: PCBLIB}.get(request.GET.get("root"))
+    if expected and contents.kind != expected:
+        return JsonResponse({"error": f"Это {KIND_TITLES[contents.kind]}, а здесь нужна {KIND_TITLES[expected]}."},
+                            status=422)
+    return JsonResponse({"kind": contents.kind, "names": contents.names,
+                         "source": contents.source, "warnings": contents.warnings,
+                         "previews": render_previews(data, contents.kind, contents.names)})

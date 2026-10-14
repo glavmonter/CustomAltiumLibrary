@@ -17,14 +17,14 @@
     zone.classList.toggle("is-error", Boolean(isError));
   }
 
-  function showPreview(zone, file) {
+  function showPreview(zone, file, note) {
     const img = zone.querySelector(".image-drop__preview");
     if (img.src) URL.revokeObjectURL(img.src);
     img.src = URL.createObjectURL(file);
     img.hidden = false;
     zone.querySelector(".image-drop__reset").hidden = false;
     zone.classList.add("has-file");
-    setStatus(zone, `${file.name} · ${Math.max(1, Math.round(file.size / 1024))} КБ — сохраните форму`);
+    setStatus(zone, note || `${file.name} · ${Math.max(1, Math.round(file.size / 1024))} КБ — сохраните форму`);
   }
 
   function reset(zone) {
@@ -36,10 +36,12 @@
     img.hidden = true;
     zone.querySelector(".image-drop__reset").hidden = true;
     zone.classList.remove("has-file");
+    delete zone.dataset.source;
     setStatus(zone, "");
   }
 
-  function acceptFile(zone, file) {
+  // source: "manual" — выбрал человек, "auto" — подставлено программно (ImageDrop.setFile)
+  function acceptFile(zone, file, source = "manual", note = "") {
     if (!file) {
       setStatus(zone, "Картинка не найдена. Если перетаскиваете с веб-страницы — сохраните её как файл.", true);
       return;
@@ -52,8 +54,30 @@
     const transfer = new DataTransfer();
     transfer.items.add(file);
     input.files = transfer.files;
-    showPreview(zone, file);
+    zone.dataset.source = source;
+    showPreview(zone, file, note);
   }
+
+  // API для других скриптов (library_path.js подставляет сгенерированное превью)
+  window.ImageDrop = {
+    /** Зона, в которой находится <input name="fieldName">. */
+    zoneFor(fieldName) {
+      const input = document.querySelector(`[data-image-drop] input[name="${fieldName}"]`);
+      return input ? input.closest("[data-image-drop]") : null;
+    },
+    /** "manual" | "auto" | undefined — откуда картинка, выбранная сейчас (до сохранения). */
+    source(zone) {
+      return zone.dataset.source;
+    },
+    /** Есть ли у объекта уже сохранённая картинка. */
+    hasCurrent(zone) {
+      return zone.querySelector("input[type=file]").dataset.hasCurrent === "1";
+    },
+    setFile(zone, file, note) {
+      acceptFile(zone, file, "auto", note);
+    },
+    reset,
+  };
 
   function imageFromClipboard(event) {
     const items = event.clipboardData ? Array.from(event.clipboardData.items) : [];

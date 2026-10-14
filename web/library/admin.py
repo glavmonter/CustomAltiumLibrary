@@ -58,6 +58,12 @@ class ImageUploadAdmin(admin.ModelAdmin):
         super().save_model(request, obj, form, change)
 
 
+def mark_current_image(form, name):
+    """Сообщает зоне <name>_upload, есть ли сохранённая картинка: сгенерированная её молча не заменит."""
+    has_current = bool(getattr(form.instance, f"{name}_media_id", None))
+    form.fields[f"{name}_upload"].widget.attrs["data-has-current"] = "1" if has_current else "0"
+
+
 class SymbolForm(forms.ModelForm):
     preview_upload = ImageUploadField(label="Загрузить картинку УГО")
     preview_clear = forms.BooleanField(label="Удалить картинку", required=False)
@@ -65,7 +71,12 @@ class SymbolForm(forms.ModelForm):
     class Meta:
         model = Symbol
         fields = ["library_ref", "library_path"]
-        widgets = {"library_path": LibraryPathWidget(SYMBOLS, ".SchLib", ref_field="library_ref")}
+        widgets = {"library_path": LibraryPathWidget(SYMBOLS, ".SchLib", ref_field="library_ref",
+                                                     preview_field="preview_upload")}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        mark_current_image(self, "preview")
 
     def clean_library_path(self):
         return normalize_library_path(self.cleaned_data["library_path"], SYMBOLS)
@@ -80,7 +91,13 @@ class FootprintForm(forms.ModelForm):
     class Meta:
         model = Footprint
         fields = ["footprint_ref", "footprint_path", "description"]
-        widgets = {"footprint_path": LibraryPathWidget(FOOTPRINTS, ".PcbLib", ref_field="footprint_ref")}
+        widgets = {"footprint_path": LibraryPathWidget(FOOTPRINTS, ".PcbLib", ref_field="footprint_ref",
+                                                       preview_field="preview_upload")}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        mark_current_image(self, "preview")
+        mark_current_image(self, "preview3d")
 
     def clean_footprint_path(self):
         return normalize_library_path(self.cleaned_data["footprint_path"], FOOTPRINTS)

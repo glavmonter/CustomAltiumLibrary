@@ -1,4 +1,6 @@
 from django import forms
+from django.conf import settings
+from django.urls import reverse
 
 IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/svg+xml"
 
@@ -29,11 +31,15 @@ class LibraryPathWidget(forms.TextInput):
         css = {"all": ["library/library_path.css"]}
         js = ["library/library_path.js"]
 
-    def __init__(self, root, extension, ref_field, attrs=None):
-        self.root, self.extension, self.ref_field = root, extension, ref_field
+    def __init__(self, root, extension, ref_field, preview_field=None, attrs=None):
+        """preview_field — имя поля ImageDropWidget, куда подставлять сгенерированное превью."""
+        self.root, self.extension, self.ref_field, self.preview_field = root, extension, ref_field, preview_field
         super().__init__({"class": "vTextField", "autocomplete": "off", "spellcheck": "false", **(attrs or {})})
 
     def get_context(self, name, value, attrs):
         context = super().get_context(name, value, attrs)
-        context["widget"].update(root=self.root, extension=self.extension, ref_field=self.ref_field)
+        context["widget"].update(root=self.root, extension=self.extension, ref_field=self.ref_field,
+                                 preview_field=self.preview_field or "",
+                                 analyze_url=reverse("library:analyze_library_file"),
+                                 max_bytes=settings.LIBRARY_MAX_LIBRARY_FILE_BYTES)
         return context
