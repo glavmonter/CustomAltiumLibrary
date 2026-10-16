@@ -28,6 +28,7 @@
   display: none;
 }
 .library-path__msg {
+  white-space: pre-line;   /* многострочные сообщения: список замечаний проверки слоёв */
   margin-top: 4px;
   padding: 3px 8px;
   border-radius: 4px;

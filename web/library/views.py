@@ -8,7 +8,7 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
 
 from .altium_files import KIND_TITLES, PCBLIB, SCHLIB, LibraryFileError, read_library
-from .altium_render import render_previews
+from .altium_render import inspect_library
 from .models import Component, ComponentClass, ComponentFootprint, Manufacturer, Media
 from .paths import FOOTPRINTS, SYMBOLS
 
@@ -183,4 +183,4 @@ def analyze_library_file(request):
     return JsonResponse({"kind": contents.kind, "names": contents.names,
                          "source": contents.source, "warnings": contents.warnings,
                          "descriptions": contents.descriptions,
-                         "previews": render_previews(data, contents.kind, contents.names)})
+                         **inspect_library(data, contents.kind, contents.names)})

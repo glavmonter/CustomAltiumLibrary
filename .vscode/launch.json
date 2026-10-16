@@ -13,7 +13,7 @@
             "console": "integratedTerminal",
             "args": ["RPSLib_PMIC.SchLib"]
         },
-                {
+        {
             "name": "print_pcb_description.py",
             "type": "debugpy",
             "request": "launch",
@@ -21,6 +21,15 @@
             "cwd": "${workspaceFolder}/tests",
             "console": "integratedTerminal",
             "args": ["One_layout.PcbLib"]
+        },
+        {
+            "name": "check_pcblib.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/tests/check_pcblib.py",
+            "cwd": "${workspaceFolder}/tests",
+            "console": "integratedTerminal",
+            "args": ["InValidLayers.PcbLib"]
         }
     ]
 }

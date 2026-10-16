@@ -68,7 +68,7 @@
           return;
         }
         resolve({names: data.names || [], stub: false, warnings: data.warnings || [], previews: data.previews || {},
-                 descriptions: data.descriptions || {}});
+                 descriptions: data.descriptions || {}, checks: data.checks || null, checksError: data.checks_error || ""});
       };
       if (signal) {
         if (signal.aborted) { xhr.abort(); return; }
@@ -276,10 +276,14 @@
     let previews = {};        // {имя: {svg} | {error}} из последнего разобранного файла
     let fileNames = [];       // имена элементов этого файла
     let descriptions = {};    // {имя: Description из файла}
+    let checks = null;        // {library: [...], footprints: {имя: [...]}} — проверка слоёв .PcbLib
+    let checksError = "";
     let lastPreviewName = null;
     function forgetFile() {
       previews = {};
       descriptions = {};
+      checks = null;
+      checksError = "";
       fileNames = [];
       lastPreviewName = null;
     }
@@ -292,6 +296,23 @@
       descriptionInput.addEventListener("input", (event) => {
         if (event.isTrusted) descriptionAuto = null;   // человек правит сам — больше не трогаем
       });
+    }
+
+    /** Итог проверки слоёв и примитивов посадочного места name (только .PcbLib; не блокирует сохранение). */
+    function applyChecks(name, messages) {
+      if (root !== "footprints") return;
+      if (checksError) {
+        messages.push(["warn", `Проверить слои не удалось: ${checksError}.`]);
+        return;
+      }
+      if (!checks || !(name in checks.footprints)) return;
+      const issues = [...checks.library, ...checks.footprints[name]];
+      if (issues.length) {
+        messages.push(["warn", `Проверка слоёв «${name}» — замечания (сохранять можно):\n`
+          + issues.map((issue) => `• ${issue}`).join("\n")]);
+      } else {
+        messages.push(["ok", `Проверка слоёв «${name}»: слои на своих механических, примитивы на месте.`]);
+      }
     }
 
     /** Подставляет Description элемента name, не перезаписывая то, что человек ввёл сам. */
@@ -429,6 +450,8 @@
         const words = WORDS[root];
         previews = (result && result.previews) || {};
         descriptions = (result && result.descriptions) || {};
+        checks = (result && result.checks) || null;
+        checksError = (result && result.checksError) || "";
         fileNames = names;
         lastPreviewName = null;
         ((result && result.warnings) || []).forEach((w) => messages.push(["warn", w]));
@@ -454,6 +477,7 @@
         if (chosen) {
           applyDescription(chosen, messages);
           applyPreview(chosen, messages);
+          applyChecks(chosen, messages);
         }
       } catch (e) {
         messages.push(["warn", `Не удалось обработать ответ сервера: ${e.message || e}`]);
@@ -541,10 +565,11 @@
         if (unblocked) clearRejection();
         const name = refInput.value.trim();
         const messages = [];
-        if (name !== lastPreviewName && (previews[name] || descriptions[name])) {
+        if (name !== lastPreviewName && fileNames.includes(name)) {
           lastPreviewName = name;
           applyDescription(name, messages);
           applyPreview(name, messages);
+          applyChecks(name, messages);
         }
         if (unblocked || messages.length) report(refMessages(messages));
       });

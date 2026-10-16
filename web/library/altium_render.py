@@ -1,4 +1,5 @@
-"""SVG-превью символов и посадочных мест из файлов Altium (библиотека pyaltiumlib, MIT).
+"""SVG-превью символов и посадочных мест из файлов Altium (библиотека pyaltiumlib, MIT)
+и проверка слоёв посадочных мест (pcb_checks).
 
 Рендер — подсказка, а не обязательный шаг: если pyaltiumlib не справилась с файлом
 (известный случай — символы с именем длиннее 31 символа), возвращается причина,
@@ -13,6 +14,7 @@ import pyaltiumlib
 import svgwrite
 from pyaltiumlib.datatypes import parametercollection
 
+from . import pcb_checks
 from .altium_files import ANSI, PCBLIB
 
 WIDTH, HEIGHT = 800, 600
@@ -39,18 +41,37 @@ def _parse_ansi(self, data):
 parametercollection.ParameterCollection.parse = _parse_ansi
 
 
-def render_previews(data: bytes, kind: str, names: list[str]) -> dict:
-    """{имя: {"svg": "<svg…>"} | {"error": "причина"}} для первых MAX_PREVIEWS элементов."""
+def inspect_library(data: bytes, kind: str, names: list[str]) -> dict:
+    """Один проход pyaltiumlib по файлу:
+    {"previews": {имя: {"svg"} | {"error"}},                       — для первых MAX_PREVIEWS элементов
+     "checks": {"library": [...], "footprints": {имя: [...]}} | None — только для .PcbLib, см. pcb_checks;
+     "checks_error": "причина" — если проверку выполнить не удалось}"""
+    result = {"previews": {}, "checks": None}
     try:
         # тип pyaltiumlib определяет по расширению имени файла
         library = pyaltiumlib.read("library.PcbLib" if kind == PCBLIB else "library.SchLib", io.BytesIO(data))
     except Exception as exc:
-        return {name: {"error": f"не удалось прочитать файл ({type(exc).__name__})"} for name in names}
+        reason = f"не удалось прочитать файл ({type(exc).__name__})"
+        result["previews"] = {name: {"error": reason} for name in names}
+        if kind == PCBLIB:
+            result["checks_error"] = reason
+        return result
 
-    previews = {}
     for name in names[:MAX_PREVIEWS]:
-        previews[name] = _render_one(library, name)
-    return previews
+        result["previews"][name] = _render_one(library, name)
+
+    if kind == PCBLIB:
+        try:
+            footprints = {}
+            for name in names[:MAX_PREVIEWS]:
+                try:
+                    footprints[name] = pcb_checks.check_footprint(library, library.get_part(name))
+                except Exception as exc:
+                    footprints[name] = [f"Примитивы проверить не удалось ({type(exc).__name__})."]
+            result["checks"] = {"library": pcb_checks.check_layers(library), "footprints": footprints}
+        except Exception as exc:
+            result["checks_error"] = f"не удалось проверить слои ({type(exc).__name__})"
+    return result
 
 
 def _render_one(library, name):
