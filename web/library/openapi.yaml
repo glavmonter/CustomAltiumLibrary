@@ -1,0 +1,378 @@
+openapi: 3.1.0
+info:
+  title: Библиотека компонентов Altium — внешнее API
+  version: 1.0.0
+  description: |
+    Массовое добавление компонентов (например, целого ряда резисторов) в библиотеку.
+
+    Символы (УГО), посадочные места, классы, производители и магазины API **не создаёт** — их заводят
+    на сайте заранее, а API на них ссылается по имени.
+
+    **Авторизация** — ключ приложения, выдаётся в админке: «Ключи API» → «Добавить».
+    API действует от имени владельца ключа и с его правами в админке.
+
+    Источник: `web/library/api.py`. Пример клиента: `examples/api_resistor_series.py`.
+servers:
+  - url: /
+    description: Этот сервер
+security:
+  - bearerAuth: []
+  - apiKeyHeader: []
+tags:
+  - name: Справочники
+  - name: Компоненты
+
+paths:
+  /api/v1/references/:
+    get:
+      tags: [Справочники]
+      operationId: getReferences
+      summary: Справочники для ссылок из компонентов
+      description: Классы (с путями), производители, магазины, символы и посадочные места. Нужно право `library.view_component`.
+      responses:
+        "200":
+          description: Справочники
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/References"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+
+  /api/v1/components/:
+    get:
+      tags: [Компоненты]
+      operationId: listComponents
+      summary: Поиск заведённых компонентов
+      description: Нужно право `library.view_component`. Фильтры объединяются через «И».
+      parameters:
+        - {name: manufacturer, in: query, description: Производитель (без учёта регистра), schema: {type: string}}
+        - {name: mpn, in: query, description: MPN целиком (без учёта регистра), schema: {type: string}}
+        - {name: mpn_contains, in: query, description: Часть MPN, schema: {type: string}}
+        - {name: design_item_id, in: query, schema: {type: string, example: CMP-000123}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
+        - {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+      responses:
+        "200":
+          description: Найденные компоненты
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ComponentList"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+
+  /api/v1/components/bulk/:
+    post:
+      tags: [Компоненты]
+      operationId: bulkComponents
+      summary: Массовое добавление / обновление компонентов
+      description: |
+        **Всё или ничего:** при любой ошибке ничего не записывается, ответ `400` с ошибками по каждому компоненту.
+
+        - `mode: create` (по умолчанию) — компонент с тем же производителем и MPN считается ошибкой.
+          Нужно право `library.add_component`.
+        - `mode: upsert` — существующий компонент обновляется: меняются только переданные поля,
+          `footprints` и `suppliers` заменяются, только если переданы. Дополнительно нужно `library.change_component`.
+        - `dry_run: true` — только проверка.
+
+        Для нового компонента обязательны `manufacturer`, `manufacturer_pn`, `class`, `symbol`
+        (в самом компоненте или в `defaults`). Лимиты: до 2000 компонентов и 10 МБ на запрос.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BulkRequest"}
+            examples:
+              vishaySeries:
+                summary: Ряд резисторов Vishay CRCW0603 1%
+                value:
+                  mode: create
+                  dry_run: true
+                  defaults:
+                    manufacturer: Vishay
+                    class: Passive / Resistor
+                    symbol: STD_RES
+                    footprints: [RESC1608X50AN]
+                    voltage: 75V
+                    tolerance: 1%
+                    tolerance_pct: 1
+                  components:
+                    - manufacturer_pn: CRCW060310K0FKEA
+                      value: 10k
+                      value_si: 10000
+                      suppliers: [{supplier: LCSC, pn: C98220}]
+                    - manufacturer_pn: CRCW060322K0FKEA
+                      value: 22k
+                      value_si: 22000
+              upsertTolerance:
+                summary: Обновить допуск у заведённого компонента
+                value:
+                  mode: upsert
+                  components:
+                    - {manufacturer: Vishay, manufacturer_pn: CRCW060310K0FKEA, tolerance: 0.5%, tolerance_pct: 0.5}
+      responses:
+        "200":
+          description: Готово, новых компонентов нет (только обновления) или это `dry_run`
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BulkResponse"}
+        "201":
+          description: Готово, созданы новые компоненты
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BulkResponse"}
+        "400":
+          description: Ошибки в запросе — ничего не записано. При ошибках в компонентах есть `results` с ошибками по каждому.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BulkErrorResponse"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "413":
+          description: Слишком большой запрос (больше 10 МБ или 2000 компонентов) — разбейте на несколько
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "Ключ приложения: `Authorization: Bearer alk_…`"
+    apiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Тот же ключ в заголовке X-API-Key
+
+  responses:
+    BadRequest:
+      description: Некорректный запрос
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Unauthorized:
+      description: Нет ключа, ключ неверный, отключён или истёк
+      headers:
+        WWW-Authenticate: {schema: {type: string}}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Forbidden:
+      description: У владельца ключа нет нужных прав
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string, description: Понятное описание ошибки}
+
+    Status:
+      type: string
+      enum: [active, nrnd, obsolete, draft]
+      description: "active — активный, nrnd — не для новых разработок, obsolete — снят с производства, draft — черновик (не виден в Altium)"
+
+    LibraryItemRef:
+      description: |
+        Ссылка на символ или посадочное место: имя; `{ref, path}`, если имя есть в нескольких файлах; или `{id}`.
+      oneOf:
+        - {type: string, example: RESC1608X50AN}
+        - type: object
+          required: [ref]
+          additionalProperties: false
+          properties:
+            ref: {type: string}
+            path: {type: string, example: footprints/Resistors/RESC1608X50AN.PcbLib}
+        - type: object
+          required: [id]
+          additionalProperties: false
+          properties:
+            id: {type: integer}
+
+    ClassRef:
+      description: Класс — имя (если оно уникально), путь «Родитель / Класс» или id.
+      oneOf:
+        - {type: string, example: Passive / Resistor}
+        - {type: integer}
+
+    SupplierInput:
+      type: object
+      required: [supplier, pn]
+      properties:
+        supplier: {type: string, description: Название магазина, example: LCSC}
+        pn: {type: string, description: Артикул в магазине}
+        url: {type: [string, "null"], format: uri, description: Ссылка на товар; пусто — по шаблону магазина}
+
+    ComponentFields:
+      type: object
+      description: Поля компонента; все необязательны и могут прийти из `defaults`.
+      properties:
+        manufacturer: {type: string, description: Название производителя (без учёта регистра)}
+        class: {$ref: "#/components/schemas/ClassRef"}
+        symbol: {$ref: "#/components/schemas/LibraryItemRef"}
+        footprints:
+          type: array
+          maxItems: 4
+          description: Посадочные места, первое — основное; пустой список — компонент без PCB
+          items: {$ref: "#/components/schemas/LibraryItemRef"}
+        suppliers:
+          type: array
+          maxItems: 3
+          items: {$ref: "#/components/schemas/SupplierInput"}
+        comment: {type: [string, "null"], description: Comment в Altium; пусто — Value, иначе MPN}
+        description: {type: [string, "null"]}
+        value: {type: [string, "null"], example: 10k}
+        voltage: {type: [string, "null"], example: 75V}
+        tolerance: {type: [string, "null"], example: 1%}
+        value_si: {type: [number, "null"], description: Значение в СИ для фильтров, example: 10000}
+        voltage_v: {type: [number, "null"]}
+        tolerance_pct: {type: [number, "null"]}
+        datasheet_url: {type: [string, "null"], format: uri, description: Даташит (HelpURL)}
+        status: {$ref: "#/components/schemas/Status"}
+
+    ComponentInput:
+      allOf:
+        - {$ref: "#/components/schemas/ComponentFields"}
+        - type: object
+          required: [manufacturer_pn]
+          properties:
+            manufacturer_pn: {type: string, description: Номер у производителя (MPN), example: CRCW060310K0FKEA}
+
+    BulkRequest:
+      type: object
+      required: [components]
+      properties:
+        mode: {type: string, enum: [create, upsert], default: create}
+        dry_run: {type: boolean, default: false}
+        defaults:
+          $ref: "#/components/schemas/ComponentFields"
+          description: Общие поля для всех компонентов; поле в компоненте их перекрывает (manufacturer_pn сюда нельзя)
+        components:
+          type: array
+          minItems: 1
+          maxItems: 2000
+          items: {$ref: "#/components/schemas/ComponentInput"}
+
+    BulkItemResult:
+      type: object
+      required: [index]
+      properties:
+        index: {type: integer, description: Номер компонента в запросе}
+        manufacturer_pn: {type: string}
+        action: {type: string, enum: [create, update]}
+        design_item_id: {type: string, example: CMP-000123, description: Есть после записи}
+        errors:
+          type: array
+          items: {type: string}
+          description: Только в ответе 400
+
+    BulkResponse:
+      type: object
+      required: [created, updated, results]
+      properties:
+        dry_run: {type: boolean, description: true — ничего не записано}
+        created: {type: integer}
+        updated: {type: integer}
+        results:
+          type: array
+          items: {$ref: "#/components/schemas/BulkItemResult"}
+
+    BulkErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string, example: "Ошибки в 1 из 24 компонентов — ничего не записано."}
+        results:
+          type: array
+          description: Есть, если ошибки в компонентах (а не в запросе целиком, например в JSON)
+          items: {$ref: "#/components/schemas/BulkItemResult"}
+
+    Component:
+      type: object
+      required: [design_item_id, manufacturer, manufacturer_pn, class, symbol, footprints, suppliers]
+      properties:
+        design_item_id: {type: string, example: CMP-000123}
+        manufacturer: {type: string}
+        manufacturer_pn: {type: string}
+        class: {type: string, description: Путь класса, example: Passive / Resistor}
+        symbol:
+          type: object
+          properties:
+            ref: {type: string}
+            path: {type: string}
+        footprints:
+          type: array
+          items:
+            type: object
+            properties:
+              ref: {type: string}
+              path: {type: string}
+        suppliers:
+          type: array
+          items:
+            type: object
+            properties:
+              supplier: {type: string}
+              pn: {type: string}
+              url: {type: [string, "null"]}
+        comment: {type: [string, "null"]}
+        description: {type: [string, "null"]}
+        value: {type: [string, "null"]}
+        voltage: {type: [string, "null"]}
+        tolerance: {type: [string, "null"]}
+        value_si: {type: [number, "null"]}
+        voltage_v: {type: [number, "null"]}
+        tolerance_pct: {type: [number, "null"]}
+        datasheet_url: {type: [string, "null"]}
+        status: {$ref: "#/components/schemas/Status"}
+
+    ComponentList:
+      type: object
+      required: [count, limit, offset, results]
+      properties:
+        count: {type: integer, description: Всего найдено}
+        limit: {type: integer}
+        offset: {type: integer}
+        results:
+          type: array
+          items: {$ref: "#/components/schemas/Component"}
+
+    References:
+      type: object
+      required: [classes, manufacturers, suppliers, symbols, footprints, statuses]
+      properties:
+        classes:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: integer}
+              name: {type: string}
+              path: {type: string}
+              altium_table: {type: [string, "null"], description: Таблица altium.<имя> для DbLib}
+        manufacturers:
+          type: array
+          items: {type: object, properties: {id: {type: integer}, name: {type: string}}}
+        suppliers:
+          type: array
+          items: {type: object, properties: {id: {type: integer}, name: {type: string}}}
+        symbols:
+          type: array
+          items: {type: object, properties: {id: {type: integer}, ref: {type: string}, path: {type: string}}}
+        footprints:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: integer}
+              ref: {type: string}
+              path: {type: string}
+              description: {type: [string, "null"]}
+        statuses:
+          type: array
+          items: {$ref: "#/components/schemas/Status"}

@@ -82,6 +82,73 @@ docker compose up -d
 Новые таблицы в `lib` и `altium` получают права для `library_web` / `altium_reader` автоматически
 (`ALTER DEFAULT PRIVILEGES` в 0001), если создаются под `library_owner`.
 
+## Внешнее API: массовое добавление компонентов
+
+Для серий (например, весь ряд резисторов Vishay): символ, посадочные места, класс, производитель и
+магазины заводятся на сайте заранее, а компоненты с разными номиналами и допусками добавляются через API.
+Код — `web/library/api.py`, пример клиента — `examples/api_resistor_series.py`.
+Спецификация OpenAPI 3.1 — `web/library/openapi.yaml`, сервер отдаёт её без ключа по адресу
+`/api/v1/openapi.yaml` (для Swagger UI, Postman, генераторов клиентов). При изменении `api.py` её нужно обновлять.
+
+**Ключ.** Админка → «Ключи API» → «Добавить». Ключ показывается **один раз**, хранится только его хэш.
+API действует от имени владельца ключа и с его правами в админке (добавление компонентов, для `upsert` —
+изменение). Обычный сотрудник выпускает ключи только на себя. Ключ можно отключить или задать срок.
+Все действия через API попадают в журнал админки с названием ключа.
+
+```
+Authorization: Bearer alk_…          (или X-API-Key: alk_…)
+```
+
+| метод | адрес | |
+|---|---|---|
+| `GET` | `/api/v1/references/` | классы (с путями), производители, магазины, символы, посадочные места |
+| `GET` | `/api/v1/components/?manufacturer=&mpn=&mpn_contains=&design_item_id=&limit=&offset=` | поиск |
+| `POST` | `/api/v1/components/bulk/` | массовое добавление / обновление |
+
+```json
+{
+  "mode": "create",
+  "dry_run": true,
+  "defaults": {
+    "manufacturer": "Vishay", "class": "Passive / Resistor", "symbol": "STD_RES",
+    "footprints": ["RESC1608X50AN"], "voltage": "75V", "tolerance": "1%", "tolerance_pct": 1
+  },
+  "components": [
+    {"manufacturer_pn": "CRCW060310K0FKEA", "value": "10k", "value_si": 10000,
+     "suppliers": [{"supplier": "LCSC", "pn": "C…"}]},
+    {"manufacturer_pn": "CRCW060322K0FKEA", "value": "22k", "value_si": 22000}
+  ]
+}
+```
+
+- **`defaults`** — общие поля для всех компонентов запроса; поле в компоненте их перекрывает.
+- **Поля компонента:** `manufacturer`, `manufacturer_pn`, `class` (имя или путь «A / B»), `symbol`,
+  `footprints` (до 4, первое — основное), `suppliers` (до 3), `comment`, `description`, `value`, `voltage`,
+  `tolerance`, `value_si`, `voltage_v`, `tolerance_pct`, `datasheet_url`, `status`.
+  Символ и посадочное место — по имени, `{"ref": …, "path": …}` (если имя есть в нескольких файлах) или `{"id": …}`.
+- **`mode`:** `create` — уже заведённый MPN (производитель + MPN) считается ошибкой; `upsert` — обновляет его:
+  меняются только переданные поля, `footprints` / `suppliers` заменяются, только если переданы.
+- **`dry_run: true`** — проверить, ничего не записывая.
+- **Всё или ничего:** при любой ошибке ничего не записывается; ответ `400` с ошибками по каждому компоненту
+  (`results[i].errors`). Успех — `201` (что-то создано) или `200`, в `results[i].design_item_id` — выданные ID.
+- Лимиты: до 2000 компонентов и 10 МБ на запрос (`LIBRARY_API_MAX_ITEMS`, `LIBRARY_API_MAX_BODY_BYTES`);
+  2000 компонентов обрабатываются примерно за 7 с.
+
+```powershell
+$env:ALTIUM_LIBRARY_API_KEY = "alk_…"
+python examples/api_resistor_series.py --series E24 --decades 1 2 3 4 5            # проверка
+python examples/api_resistor_series.py --series E24 --decades 1 2 3 4 5 --apply    # запись
+```
+
+## Тесты
+
+Тестовая база создаётся из тех же миграций, поэтому нужен пользователь БД с правом CREATEDB:
+
+```sh
+docker compose build web
+docker compose run --rm --entrypoint python -e DB_USER=postgres -e DB_PASSWORD=<POSTGRES_PASSWORD> web manage.py test library
+```
+
 ## Разработка сайта без Docker-образа
 
 База — в Docker, сайт — из `.venv` с автоперезагрузкой при правке кода:

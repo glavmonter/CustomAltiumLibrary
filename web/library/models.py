@@ -1,9 +1,15 @@
 """Модели поверх схемы lib.
 
-Все модели managed=False: структуру таблиц создают SQL-операции миграций (migrations/sql/),
+Модели схемы lib — managed=False: структуру таблиц создают SQL-операции миграций (migrations/sql/),
 Django только читает и пишет данные. Таблицы находятся по search_path (public,lib).
+Исключение — служебная ApiKey (ключи внешнего API): обычная модель Django в схеме public.
 """
 
+import hashlib
+import hmac
+import secrets
+
+from django.conf import settings
 from django.core.validators import RegexValidator
 from django.db import models
 from django.db.models import Value
@@ -258,3 +264,54 @@ class ComponentSupplier(models.Model):
             return self.product_url
         template = self.supplier.product_url_template
         return template.replace("{pn}", self.supplier_pn) if template else None
+
+
+class ApiKey(models.Model):
+    """Ключ приложения для внешнего API (library/api.py).
+
+    Сам ключ показывается один раз при создании; в базе — только префикс (для поиска) и SHA-256.
+    API действует от имени user и с его правами в админке.
+    """
+
+    PREFIX = "alk_"
+
+    name = models.CharField("название", max_length=100, help_text="Кто или что пользуется ключом")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, models.CASCADE, related_name="api_keys",
+                             verbose_name="владелец", help_text="API получает права этого пользователя")
+    prefix = models.CharField("префикс", max_length=16, unique=True, editable=False)
+    key_hash = models.CharField(max_length=64, editable=False)
+    is_active = models.BooleanField("действует", default=True)
+    expires_at = models.DateTimeField("действует до", null=True, blank=True)
+    created_at = models.DateTimeField("создан", auto_now_add=True)
+    last_used_at = models.DateTimeField("последнее использование", null=True, blank=True, editable=False)
+
+    class Meta:
+        db_table = "api_keys"
+        ordering = ["-created_at"]
+        verbose_name = "ключ API"
+        verbose_name_plural = "ключи API"
+
+    def __str__(self):
+        return f"{self.name} ({self.PREFIX}{self.prefix}…)"
+
+    @staticmethod
+    def _hash(raw_key):
+        return hashlib.sha256(raw_key.encode()).hexdigest()
+
+    def issue(self):
+        """Генерирует новый ключ, сохраняет его хэш и возвращает сам ключ (единственный раз)."""
+        prefix = secrets.token_hex(4)
+        raw_key = f"{self.PREFIX}{prefix}_{secrets.token_urlsafe(32)}"
+        self.prefix, self.key_hash = prefix, self._hash(raw_key)
+        return raw_key
+
+    @classmethod
+    def find(cls, raw_key):
+        """Ключ по его строке или None. Сравнение хэшей — за постоянное время."""
+        if not raw_key or not raw_key.startswith(cls.PREFIX):
+            return None
+        prefix = raw_key[len(cls.PREFIX):].split("_", 1)[0]
+        key = cls.objects.select_related("user").filter(prefix=prefix).first()
+        if key and hmac.compare_digest(key.key_hash, cls._hash(raw_key)):
+            return key
+        return None

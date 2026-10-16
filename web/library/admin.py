@@ -1,11 +1,11 @@
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
 from django.urls import reverse
 from django.utils.html import format_html
 
 from .images import media_from_upload
-from .models import (Component, ComponentClass, ComponentFootprint, ComponentSupplier, Footprint,
+from .models import (ApiKey, Component, ComponentClass, ComponentFootprint, ComponentSupplier, Footprint,
                      Manufacturer, Supplier, Symbol)
 from .paths import FOOTPRINTS, SYMBOLS, normalize_library_path
 from .widgets import ImageDropWidget, LibraryPathWidget
@@ -255,3 +255,84 @@ class ComponentAdmin(admin.ModelAdmin):
     @admin.display(description="Картинка УГО")
     def symbol_preview(self, obj):
         return image_tag(obj.symbol.preview_media_id if obj.symbol_id else None, 240, link=True)
+
+
+# ---------------------------------------------------------------------------
+#  Ключи внешнего API (library/api.py)
+# ---------------------------------------------------------------------------
+@admin.register(ApiKey)
+class ApiKeyAdmin(admin.ModelAdmin):
+    list_display = ("name", "user", "masked_key", "is_active", "expires_at", "created_at", "last_used_at")
+    list_filter = ("is_active",)
+    search_fields = ("name", "prefix", "user__username")
+    readonly_fields = ("masked_key", "created_at", "last_used_at")
+    fields = ("name", "user", "is_active", "expires_at", "masked_key", "created_at", "last_used_at")
+
+    @admin.display(description="ключ")
+    def masked_key(self, obj):
+        return f"{ApiKey.PREFIX}{obj.prefix}_…" if obj.prefix else "появится после сохранения"
+
+    # Ключ даёт права владельца, поэтому обычный сотрудник выпускает и видит только свои ключи —
+    # иначе он мог бы выпустить ключ на суперпользователя и получить его права через API.
+    def get_queryset(self, request):
+        qs = super().get_queryset(request).select_related("user")
+        return qs if request.user.is_superuser else qs.filter(user=request.user)
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == "user" and not request.user.is_superuser:
+            kwargs["queryset"] = db_field.related_model.objects.filter(pk=request.user.pk)
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+    def get_changeform_initial_data(self, request):
+        return {"user": request.user.pk}
+
+    def save_model(self, request, obj, form, change):
+        if not request.user.is_superuser:
+            obj.user = request.user
+        raw_key = None if change else obj.issue()
+        super().save_model(request, obj, form, change)
+        if raw_key:
+            messages.warning(request, format_html(
+                "Ключ API «{}»: <code style=\"user-select:all\">{}</code><br>"
+                "Скопируйте его сейчас — больше он показан не будет. Передавайте в заголовке "
+                "<code>Authorization: Bearer &lt;ключ&gt;</code>.", obj.name, raw_key))
+
+
+# ---------------------------------------------------------------------------
+#  Порядок разделов в меню админки (по умолчанию Django сортирует по алфавиту)
+# ---------------------------------------------------------------------------
+LIBRARY_MODEL_ORDER = ["ComponentClass", "Component", "Symbol", "Footprint", "Manufacturer", "Supplier"]
+# Ключи API — про доступ, а не про библиотеку: показываем их в «Пользователи и группы»
+MOVED_TO_AUTH = {"ApiKey"}
+_default_get_app_list = admin.AdminSite.get_app_list
+
+
+def get_app_list(self, request, app_label=None):
+    if app_label not in (None, "auth", "library"):
+        return _default_get_app_list(self, request, app_label)
+    full = {app["app_label"]: app for app in _default_get_app_list(self, request)}
+    library, auth = full.get("library"), full.get("auth")
+
+    moved = [m for m in (library["models"] if library else []) if m["object_name"] in MOVED_TO_AUTH]
+    if library:
+        library["models"] = sorted(
+            (m for m in library["models"] if m["object_name"] not in MOVED_TO_AUTH),
+            key=lambda m: (LIBRARY_MODEL_ORDER.index(m["object_name"])
+                           if m["object_name"] in LIBRARY_MODEL_ORDER else len(LIBRARY_MODEL_ORDER)))
+        if not library["models"]:
+            del full["library"]
+    if moved:
+        if auth is None:   # нет прав на пользователей и группы — раздел только с ключами
+            from django.apps import apps
+            auth = full["auth"] = {"name": apps.get_app_config("auth").verbose_name, "app_label": "auth",
+                                   "app_url": reverse("admin:app_list", kwargs={"app_label": "auth"}),
+                                   "has_module_perms": True, "models": []}
+        auth["models"] = auth["models"] + moved
+
+    apps_list = sorted(full.values(), key=lambda a: a["name"].lower())
+    if app_label:
+        return [a for a in apps_list if a["app_label"] == app_label]
+    return apps_list
+
+
+admin.AdminSite.get_app_list = get_app_list

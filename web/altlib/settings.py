@@ -102,3 +102,7 @@ STORAGES = {
 LIBRARY_MAX_IMAGE_BYTES = 5 * 1024 * 1024
 # Максимальный размер файла .SchLib / .PcbLib, отправляемого на разбор
 LIBRARY_MAX_LIBRARY_FILE_BYTES = 12 * 1024 * 1024
+
+# Внешнее API (library/api.py): размер тела запроса и число компонентов в одном запросе
+LIBRARY_API_MAX_BODY_BYTES = 10 * 1024 * 1024
+LIBRARY_API_MAX_ITEMS = 2000
